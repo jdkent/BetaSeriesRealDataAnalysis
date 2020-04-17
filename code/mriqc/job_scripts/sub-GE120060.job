@@ -1,0 +1,16 @@
+#!/bin/sh
+
+#$ -pe smp 16
+#$ -q UI
+#$ -m bea
+#$ -M james-kent@uiowa.edu
+#$ -o /Users/jdkent/bids/derivatives/code/mriqc/out
+#$ -e /Users/jdkent/bids/derivatives/code/mriqc/err
+OMP_NUM_THREADS=10
+singularity run --cleanenv -H ${HOME}/singularity_home \
+/Users/jdkent/bids/derivatives/code/mriqc/mriqc-0.15.1.simg \
+/Users/jdkent/bids /Users/jdkent/bids/derivatives/mriqc \
+participant --participant_label GE120060 \
+-w /nfsscratch/Users/jdkent/work/Aim1mriqc \
+--n_procs 16 --mem_gb 35 --write-graph \
+--fd_thres 0.5 --ants-nthreads 10 --start-idx 4

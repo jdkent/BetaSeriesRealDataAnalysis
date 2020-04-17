@@ -1,0 +1,21 @@
+[submodule "lsaNoSignalScale"]
+	path = lsaNoSignalScale
+	url = ./lsaNoSignalScale/
+[submodule "lsa-overallresponse"]
+	path = lsa-overallresponse
+	url = ./lsa-overallresponse
+[submodule "lsa-schaeferparcel-400"]
+	path = lsa-schaeferparcel-400
+	url = ./lsa-schaeferparcel-400
+[submodule "lssNoSignalScale"]
+	path = lssNoSignalScale
+	url = ./lssNoSignalScale/
+[submodule "lss-overallresponse"]
+	path = lss-overallresponse
+	url = ./lss-overallresponse
+[submodule "lss-schaeferparcel-400"]
+	path = lss-schaeferparcel-400
+	url = ./lss-schaeferparcel-400
+[submodule "mriqc"]
+	path = mriqc
+	url = ./mriqc

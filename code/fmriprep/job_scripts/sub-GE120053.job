@@ -1,0 +1,18 @@
+#!/bin/bash
+
+#$ -pe smp 16
+#$ -q UI
+#$ -m bea
+#$ -M james-kent@uiowa.edu
+#$ -o /Users/jdkent/bids/derivatives/code/fmriprep/out/
+#$ -e /Users/jdkent/bids/derivatives/code/fmriprep/err/
+OMP_NUM_THREADS=10
+singularity run --cleanenv -H ${HOME}/singularity_home \
+/Users/jdkent/simgs/fmriprep-1.5.7.simg \
+/Users/jdkent/bids/ /Users/jdkent/bids/derivatives \
+participant --participant_label GE120053 \
+-w /nfsscratch/Users/jdkent/work/Aim1fmriprep \
+--write-graph --mem_mb 35000 --omp-nthreads 10 --nthreads 16 --use-aroma \
+--dummy-scans 4 \
+--output-spaces MNI152NLin2009cAsym func T1w \
+--fs-license-file /Shared/vosslabhpc/UniversalSoftware/freesurfer_license.txt
