@@ -337,7 +337,11 @@ def return_lower_matrix(adj_matrix):
     return from_1d_to_2d_lower_matrix(lower_tri, adj_matrix.columns)
 
 
-def make_comparison_matrix(p_value_matrix1, matrix1_label, p_value_matrix2, matrix2_label, cmap_dict, rois='schaefer'):
+# def make_glass_brain(p_value_matrix1, matrix1_label, p_value_matrix2, matrix2_label, cmap_dict,
+#                     coords_df):
+    
+def make_comparison_matrix(p_value_matrix1, matrix1_label, p_value_matrix2, matrix2_label, cmap_dict,
+                           rois='schaefer'):
     
     # ENSURE CMAP_DICT IS IN CORRECT ORDER
     cols = p_value_matrix1.columns
@@ -388,7 +392,7 @@ def make_comparison_matrix(p_value_matrix1, matrix1_label, p_value_matrix2, matr
     colorbar.set_ticklabels(list(cmap_dict.keys()))
     colorbar.ax.tick_params(labelsize=20)
     
-    return fig
+    return fig, overlap_df
     
     
 def get_layout_objects(layout, trialtypes, **filters):
@@ -433,9 +437,9 @@ def compare_lss_lsa_sig(lss_objs1, lss_objs2, lsa_objs1, lsa_objs2,
         "Both": 3
     }
 
-    fig = make_comparison_matrix(lsa_pvalue_df, "lsa", lss_pvalue_df, "lss", rois=rois, cmap_dict=cmap_dict)
+    fig, overlap_df = make_comparison_matrix(lsa_pvalue_df, "lsa", lss_pvalue_df, "lss", rois=rois, cmap_dict=cmap_dict)
     
-    return fig, lss_model_df, lsa_model_df 
+    return fig, lss_model_df, lsa_model_df, overlap_df
 
 
 def _identify_nan_entries(adj_df):
