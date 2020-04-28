@@ -4,6 +4,8 @@ functions to help with keeping the notebook uncluttered
 """
 import re
 from multiprocessing.pool import Pool
+from functools import partial
+import random
 
 import seaborn as sns
 import pandas as pd
@@ -13,7 +15,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import matplotlib as mpl
 from nilearn.plotting import plot_connectome
-
+from scipy import stats
+from joblib import Parallel, delayed
 
 from rpy2 import robjects as robj
 from rpy2.robjects import pandas2ri
@@ -73,6 +76,12 @@ def _adj_to_edge(df):
 
 
 def _identify_within_between(edge_df):
+    """
+    specify whether an ROI-ROI pair is
+    within a network (e.g., Vis-1__Vis-2)
+    or between networks (e.g., Vis-1__Con-1)
+    """
+    
     edge_df.dropna(inplace=True) # drop self connections
     # isolate the networks from the longform schaefer names
     edge_df['source_network'] = edge_df['source'].str.split('-').apply(lambda x: x[1])
@@ -84,6 +93,7 @@ def _identify_within_between(edge_df):
 
 
 def _condense_within_between(proc_edge_df):
+    """Give one measure for within and between"""
     info_df = proc_edge_df.groupby(['network_connection', 'source_network']).describe().T.loc[('weight', 'mean'), :].to_frame()
     info_df.columns = info_df.columns.droplevel()
     info_df.reset_index(inplace=True)
@@ -175,6 +185,13 @@ def z_score_cutoff(arr, thresh):
 
 
 def _combine_adj_matrices_wide(dfs):
+    """
+    take a list of adjacency matrices
+    and take all unique ROI-ROI pairs
+    to create a unique column where
+    there are two underscores separating
+    the ROI names (e.g., Vis-1__Vis-2)
+    """
     names = dfs[0].columns
     upper_idxs = np.triu_indices(len(names), k=1)
     new_colnames = ['__'.join([names[i], names[j]]) for i, j in zip(*upper_idxs)]
@@ -197,10 +214,132 @@ def bind_matrices(objs, label):
 
     return wide_df
 
+def permute_condition_orig(df):
+    """
+    inputs
+    ------
+    df: pandas.Dataframe
+        dataframe whose rows represent a participant duing a particular condition
+ 
+    outputs
+    -------
+    df_copy: pandas.Dataframe
+        copy of original dataframe with the correlation permuted
+        to be either in one condition or another (e.g., switch or repeat).
+    """
+    df_copy = df.copy()
+    participants = df['participant_id'].unique()
+    for participant in participants:
+        participant_rows = df['participant_id'] == participant
+        column_selection = (df.columns != 'participant_id') & (df.columns != 'task')
+        df_copy.loc[participant_rows, column_selection] = np.random.permutation(df.loc[participant_rows,column_selection])
+
+    return df_copy
+
+def permute_condition(df, rng):
+    """
+    inputs
+    ------
+    df: pandas.Dataframe
+        dataframe whose rows represent a participant duing a particular condition
+    rng: np.random.RandomState
+        random number generator that contains reproducible state
+     
+    
+    outputs
+    -------
+    df_copy: pandas.Dataframe
+        copy of original dataframe with the correlation permuted
+        to be either in one condition or another (e.g., switch or repeat).
+    """
+    df_copy = df.copy(deep=True)
+    participants = df['participant_id'].unique()
+    for participant in participants:
+        participant_rows = df['participant_id'] == participant
+        column_selection = (df.columns != 'participant_id') & (df.columns != 'task')
+        df_copy.loc[participant_rows, column_selection] = rng.permutation(df.loc[participant_rows,column_selection])
+
+    return df_copy
+
+
+def _model_helper(wide_df, rng, use_python=False, permute=False, alpha=0.05):
+        model_df = model_corr_diff(wide_df, rng, use_python=use_python, permute=permute)
+        return np.sum(model_df['p_value'] < alpha)
+
+
+def count_positives_from_permutations_orig(objs1, objs2, trialtype1, trialtype2,
+                                      permutations=2, alpha=0.05,
+                                      nthreads=1, use_python=False):
+    
+    wide_df = pd.concat([bind_matrices(objs1, trialtype1),
+                         bind_matrices(objs2, trialtype2)])
+    
+    # rng = np.random.RandomState(0)
+    args = [(wide_df, np.random.RandomState(n)) for n in range(permutations)]
+    # sig_pvalue_collector = []
+    partial_rmod = partial(_model_helper, **{'use_python': use_python, 'permute': True, 'alpha': 0.05})
+    sig_pvalue_collector = Parallel(n_jobs=32)(delayed(partial_rmod)(df,rng) for df, rng in args)
+    # for _ in range(permutations):
+    # for df, rng in args:
+    #    n_sig_pvalues = partial_rmod(df, rng, use_python=use_python, permute=True)
+        # model_df = model_corr_diff_mt(wide_df, nthreads, use_python=use_python, permute=True)
+        # n_sig_pvalues = np.sum(model_df['p_value'] < alpha)
+    #    print(n_sig_pvalues)
+    #    sig_pvalue_collector.append(n_sig_pvalues)
+    
+    return sig_pvalue_collector
+
+
+def count_positives_from_permutations(objs1=None, objs2=None, trialtype1=None, trialtype2=None,
+                                      wide_df=None,
+                                      permutations=2, alpha=0.05,
+                                      nthreads=1, use_python=False):
+    
+    if objs1:
+        wide_df = pd.concat([bind_matrices(objs1, trialtype1),
+                             bind_matrices(objs2, trialtype2)])
+    elif wide_df:
+        pass
+    else:
+        raise ValueError("either objects or wide dataframe must be provided")
+    
+    args = [(wide_df, np.random.RandomState(n+10)) for n in range(permutations)]
+    
+    partial_rmod = partial(_model_helper, **{'use_python': use_python, 'permute': True, 'alpha': 0.05})
+
+    sig_pvalue_collector = Parallel(n_jobs=nthreads)(delayed(partial_rmod)(df,rng) for df, rng in args)
+
+    return sig_pvalue_collector
+
+
+def _run_model_python(df, col, nuisance_cols=None):
+    all_cols =['participant_id', 'task', col]
+    if nuisance_cols:
+        raise NotImplementedError("using nuisance columns is not implemented with python")
+    filt_df = df[all_cols]
+    filt_df = filt_df.rename({col: 'correlation'}, axis=1)
+    # identify participants with nans and remove them
+    inds = pd.isnull(filt_df).any(1).to_numpy().nonzero()[0]
+    bad_participants = filt_df.iloc[inds, :]['participant_id'].unique()
+    filt_good_df = filt_df[~filt_df['participant_id'].isin(bad_participants)]
+    
+    tasks = filt_good_df['task'].unique()
+    collector_dict = {'source_target': None, 'p_value': None, 'estimate': None}
+  
+    filt_wide_df = filt_good_df.pivot(index='participant_id', columns='task', values='correlation')
+    
+    t, p = stats.ttest_rel(filt_wide_df[tasks[0]], filt_wide_df[tasks[1]])
+    
+    collector_dict['source_target'] = col
+    collector_dict['p_value'] = p
+    collector_dict['estimate'] = t
+    
+    return collector_dict
 
 STATS = importr('stats')
 BASE = importr('base')
 
+    
 def _run_model(df, col, nuisance_cols=None):
     all_cols = ['participant_id', 'task', col]
     if nuisance_cols:
@@ -233,7 +372,31 @@ def _run_model(df, col, nuisance_cols=None):
     return collector_dict
 
 
-def model_corr_diff_mt(wide_df, n_threads, nuisance_cols=None):
+def model_corr_diff(wide_df, rng, nuisance_cols=None, use_python=False, permute=False):
+    cols = set(wide_df.columns)
+    # I do not want to iterate over these columns
+    non_cols = ["task", "participant_id", "nan_rois", "num_nan_rois"]
+    model_cols = ['participant_id', 'task']
+    if nuisance_cols:
+        non_cols.extend(nuisance_cols)
+        model_cols.extend(nuisance_cols)
+    cols = list(cols - set(non_cols))
+    
+    if use_python:
+        model_runner = _run_model_python
+    else:
+        model_runner = _run_model
+    
+    dict_collector = {'source_target': [], 'p_value': [], 'estimate': []}
+    for col in cols:
+        result_dict = model_runner(permute_condition(wide_df[model_cols + [col]], rng), col, nuisance_cols)
+        for k in ['source_target', 'p_value', 'estimate']:
+            dict_collector[k].append(result_dict[k])
+    
+    return pd.DataFrame.from_dict(dict_collector)
+        
+    
+def model_corr_diff_mt(wide_df, n_threads, nuisance_cols=None, use_python=False, permute=False):
     """setup to run linear regression for every roi-roi pair
     """
     cols = set(wide_df.columns)
@@ -244,10 +407,19 @@ def model_corr_diff_mt(wide_df, n_threads, nuisance_cols=None):
         non_cols.extend(nuisance_cols)
         model_cols.extend(nuisance_cols)
     cols = list(cols - set(non_cols))
-    args = [(wide_df[model_cols + [col]], col, nuisance_cols) for col in cols]
+    
+    if permute:
+        rng = np.random.RandomState(0)
+        args = [(permute_condition(wide_df[model_cols + [col]], rng), col, nuisance_cols) for col in cols]
+    else:
+        args = [(wide_df[model_cols + [col]], col, nuisance_cols) for col in cols]
+    if use_python:
+        model_runner = _run_model_python
+    else:
+        model_runner = _run_model
     # run this in parallel to speed up computation
     with Pool(n_threads) as p:
-        sep_dicts = p.starmap(_run_model, args)
+        sep_dicts = p.starmap(model_runner, args)
     dict_collector = {
             k: [d.get(k) for d in sep_dicts]
             for k in set().union(*sep_dicts)}
@@ -437,16 +609,17 @@ def get_layout_objects(layout, trialtypes, **filters):
         
 
 def compare_lss_lsa_sig(lss_objs1, lss_objs2, lsa_objs1, lsa_objs2,
-                        trialtype1, trialtype2, rois, nthreads=1):
+                        trialtype1, trialtype2, rois, nthreads=1, use_python=False):
+
     lss_wide_df = pd.concat([bind_matrices(lss_objs1, trialtype1),
                              bind_matrices(lss_objs2, trialtype2)])
- 
-    lss_model_df = model_corr_diff_mt(lss_wide_df, nthreads)
+
+    lss_model_df = model_corr_diff_mt(lss_wide_df, nthreads, use_python=use_python)
     
     lsa_wide_df = pd.concat([bind_matrices(lsa_objs1, trialtype1),
                              bind_matrices(lsa_objs2, trialtype2)])
     
-    lsa_model_df = model_corr_diff_mt(lsa_wide_df, nthreads)
+    lsa_model_df = model_corr_diff_mt(lsa_wide_df, nthreads, use_python=use_python)
     
     if rois == 'schaefer':
         lss_pvalue_df = make_symmetric_df(lss_model_df, "p_value")
