@@ -1,0 +1,7 @@
+estimation-lsa_contrast-taskxnull_data-real_atlas-schaefer_permutations.pkl
+estimation-lss_contrast-switchxsingle_data-real_atlas-schaefer_permutations.pkl
+estimation-lsa_contrast-switchxsingle_data-real_atlas-schaefer_permutations.pkl
+estimation-lss_contrast-repeatxsingle_data-real_atlas-schaefer_permutations.pkl
+estimation-lsa_contrast-repeatxsingle_data-real_atlas-schaefer_permutations.pkl
+estimation-lss_contrast-switchxrepeat_data-real_atlas-schaefer_permutations.pkl
+estimation-lsa_contrast-switchxrepeat_data-real_atlas-schaefer_permutations.pkl
