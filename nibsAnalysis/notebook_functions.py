@@ -236,6 +236,33 @@ def permute_condition_orig(df):
 
     return df_copy
 
+
+def permute_condition_one_sample(df, rng):
+    """
+    inputs
+    ------
+    df: pandas.Dataframe
+        dataframe whose rows represent a participant's correlation difference between conditions
+    rng: np.random.RandomState
+        random number generator that contains reproducible state
+     
+    
+    outputs
+    -------
+    df_copy: pandas.Dataframe
+        copy of original dataframe with the correlation difference permuted
+        to be either positive or negative (e.g., multiplied by either +1 or -1).
+    """
+ 
+    column_selector = (df.columns != 'participant_id') & (df.columns != 'task')
+    correlation_values = df.loc[:, column_selector].values
+    permutation = np.random.choice([-1, 1], size=correlation_values.shape)
+    permutation_df = df.loc[:, column_selector] * permutation
+    permutation_df[["participant_id", "task"]] = df[["participant_id", "task"]]
+    
+    return permutation_df
+
+
 def permute_condition(df, rng):
     """
     inputs
@@ -257,13 +284,13 @@ def permute_condition(df, rng):
     for participant in participants:
         participant_rows = df['participant_id'] == participant
         column_selection = (df.columns != 'participant_id') & (df.columns != 'task')
-        df_copy.loc[participant_rows, column_selection] = rng.permutation(df.loc[participant_rows,column_selection])
+        df_copy.loc[participant_rows, column_selection] = rng.permutation(df.loc[participant_rows, column_selection])
 
     return df_copy
 
 
-def _model_helper(wide_df, rng, use_python=False, permute=False, alpha=0.05):
-        model_df = model_corr_diff(wide_df, rng, use_python=use_python, permute=permute)
+def _model_helper(wide_df, rng, use_python=False, permute=False, one_sample=False, alpha=0.05):
+        model_df = model_corr_diff(wide_df, rng, use_python=use_python, permute=permute, one_sample=one_sample)
         return np.sum(model_df['p_value'] < alpha)
 
 
@@ -293,26 +320,30 @@ def count_positives_from_permutations_orig(objs1, objs2, trialtype1, trialtype2,
 def count_positives_from_permutations(objs1=None, objs2=None, trialtype1=None, trialtype2=None,
                                       wide_df=None,
                                       permutations=2, alpha=0.05,
-                                      nthreads=1, use_python=False):
+                                      nthreads=1, use_python=False,
+                                      one_sample=False):
     
     if objs1:
         wide_df = pd.concat([bind_matrices(objs1, trialtype1),
                              bind_matrices(objs2, trialtype2)])
-    elif wide_df:
+    elif wide_df is not None:
         pass
     else:
         raise ValueError("either objects or wide dataframe must be provided")
     
     args = [(wide_df, np.random.RandomState(n+10)) for n in range(permutations)]
     
-    partial_rmod = partial(_model_helper, **{'use_python': use_python, 'permute': True, 'alpha': 0.05})
+    partial_rmod = partial(_model_helper, **{'use_python': use_python,
+                                             'permute': True,
+                                             'alpha': 0.05,
+                                             'one_sample': one_sample})
 
     sig_pvalue_collector = Parallel(n_jobs=nthreads)(delayed(partial_rmod)(df,rng) for df, rng in args)
 
     return sig_pvalue_collector
 
 
-def _run_model_python(df, col, nuisance_cols=None):
+def _run_model_python(df, col, nuisance_cols=None, one_sample=False):
     all_cols =['participant_id', 'task', col]
     if nuisance_cols:
         raise NotImplementedError("using nuisance columns is not implemented with python")
@@ -328,7 +359,11 @@ def _run_model_python(df, col, nuisance_cols=None):
   
     filt_wide_df = filt_good_df.pivot(index='participant_id', columns='task', values='correlation')
     
-    t, p = stats.ttest_rel(filt_wide_df[tasks[0]], filt_wide_df[tasks[1]])
+    # compare to zero
+    if one_sample:
+        t, p = stats.ttest_1samp(filt_wide_df[tasks[0]], 0)
+    else:
+        t, p = stats.ttest_rel(filt_wide_df[tasks[0]], filt_wide_df[tasks[1]])
     
     collector_dict['source_target'] = col
     collector_dict['p_value'] = p
@@ -340,7 +375,9 @@ STATS = importr('stats')
 BASE = importr('base')
 
     
-def _run_model(df, col, nuisance_cols=None):
+def _run_model(df, col, nuisance_cols=None, one_sample=False):
+    if one_sample:
+        raise NotImplementedError("one sample ttests are not implemented")
     all_cols = ['participant_id', 'task', col]
     if nuisance_cols:
         all_cols.extend(nuisance_cols)
@@ -372,7 +409,8 @@ def _run_model(df, col, nuisance_cols=None):
     return collector_dict
 
 
-def model_corr_diff(wide_df, rng, nuisance_cols=None, use_python=False, permute=False):
+def model_corr_diff(wide_df, rng, nuisance_cols=None, use_python=False, permute=False, one_sample=False):
+    """Only runs permutations"""
     cols = set(wide_df.columns)
     # I do not want to iterate over these columns
     non_cols = ["task", "participant_id", "nan_rois", "num_nan_rois"]
@@ -388,15 +426,23 @@ def model_corr_diff(wide_df, rng, nuisance_cols=None, use_python=False, permute=
         model_runner = _run_model
     
     dict_collector = {'source_target': [], 'p_value': [], 'estimate': []}
+    if permute and one_sample:
+        use_wide_df = permute_condition_one_sample(wide_df, rng)
+    elif permute:
+        use_wide_df = wide_df[model_cols].copy()
+        for col in cols:
+            use_wide_df[col] = permute_condition(wide_df[model_cols + [col]], rng)[col]
+    else:
+        use_wide_df = wide_df
     for col in cols:
-        result_dict = model_runner(permute_condition(wide_df[model_cols + [col]], rng), col, nuisance_cols)
+        result_dict = model_runner(use_wide_df[model_cols + [col]], col, nuisance_cols, one_sample)
         for k in ['source_target', 'p_value', 'estimate']:
             dict_collector[k].append(result_dict[k])
     
     return pd.DataFrame.from_dict(dict_collector)
         
     
-def model_corr_diff_mt(wide_df, n_threads, nuisance_cols=None, use_python=False, permute=False):
+def model_corr_diff_mt(wide_df, n_threads, nuisance_cols=None, use_python=False, permute=False, one_sample=False):
     """setup to run linear regression for every roi-roi pair
     """
     cols = set(wide_df.columns)
@@ -410,9 +456,9 @@ def model_corr_diff_mt(wide_df, n_threads, nuisance_cols=None, use_python=False,
     
     if permute:
         rng = np.random.RandomState(0)
-        args = [(permute_condition(wide_df[model_cols + [col]], rng), col, nuisance_cols) for col in cols]
+        args = [(permute_condition(wide_df[model_cols + [col]], rng), col, nuisance_cols, one_sample) for col in cols]
     else:
-        args = [(wide_df[model_cols + [col]], col, nuisance_cols) for col in cols]
+        args = [(wide_df[model_cols + [col]], col, nuisance_cols, one_sample) for col in cols]
     if use_python:
         model_runner = _run_model_python
     else:
@@ -521,7 +567,7 @@ def make_glass_brain(overlap_df, coords_df):
     cmap_list = sns.xkcd_palette(["royal blue", "olive green", "bright yellow"])
     cmap=ListedColormap(cmap_list)
     
-    fig, axes = plt.subplots(ncols=2, figsize=(14,5), gridspec_kw={'width_ratios': [23/24, 1/24]})
+    fig, axes = plt.subplots(ncols=2, figsize=(14, 5), gridspec_kw={'width_ratios': [23/24, 1/24]})
     
     plot_connectome(overlap_df, axes=axes[0], figure=fig, edge_cmap=cmap, node_coords=coords,
                 edge_vmin=0.9,
@@ -535,7 +581,7 @@ def make_glass_brain(overlap_df, coords_df):
     r = 3.0 
     colorbar.set_ticks([0.0 + r / 3 * (0.5 + i) for i in range(3)])
     colorbar.set_ticklabels(["LSA", "LSS", "Both"])
-    colorbar.ax.tick_params(labelsize=20)
+    colorbar.ax.tick_params(labelsize=12)
 
     # label the nodes with their number
     for ax in fig.axes[2:]:
