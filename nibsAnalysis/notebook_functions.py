@@ -184,7 +184,7 @@ def z_score_cutoff(arr, thresh):
     return arr.clip(-thresh, thresh)
 
 
-def _combine_adj_matrices_wide(dfs):
+def _combine_adj_matrices_wide(dfs, names=None):
     """
     take a list of adjacency matrices
     and take all unique ROI-ROI pairs
@@ -192,15 +192,17 @@ def _combine_adj_matrices_wide(dfs):
     there are two underscores separating
     the ROI names (e.g., Vis-1__Vis-2)
     """
-    names = dfs[0].columns
+    if names is None:
+        names = dfs[0].columns
+
     upper_idxs = np.triu_indices(len(names), k=1)
     new_colnames = ['__'.join([names[i], names[j]]) for i, j in zip(*upper_idxs)]
-    wide_df = pd.DataFrame(np.array([df.values[upper_idxs] for df in dfs]), columns=new_colnames)
+    wide_df = pd.DataFrame(np.array([df.loc[names, names].values[upper_idxs] for df in dfs]), columns=new_colnames)
 
     return wide_df
 
 
-def bind_matrices(objs, label):
+def bind_matrices(objs, label, names=None):
     """combine all adjacency matrices to a wide format where
     each column represents a unique roi-roi pair and each row represents
     an observation from a participant_id.
@@ -208,7 +210,7 @@ def bind_matrices(objs, label):
 
     dfs = [_read_adj_matrix(obj.path) for obj in objs]
     participant_ids = [obj.entities['subject'] for obj in objs]
-    wide_df = _combine_adj_matrices_wide(dfs)
+    wide_df = _combine_adj_matrices_wide(dfs, names)
     wide_df['participant_id'] = participant_ids
     wide_df['task'] = [label] * len(participant_ids)
 
@@ -653,6 +655,56 @@ def get_layout_objects(layout, trialtypes, **filters):
     
     return object_collector
         
+
+def compare_ppi_lss_lsa_sig(ppi_wide_df, lss_wide_df, lsa_wide_df, rois, nthreads=1, use_python=False):
+    
+    ppi_model_df = model_corr_diff_mt(ppi_wide_df, nthreads, use_python=use_python, one_sample=True)
+    lss_model_df = model_corr_diff_mt(lss_wide_df, nthreads, use_python=use_python, one_sample=True)
+    lsa_model_df = model_corr_diff_mt(lsa_wide_df, nthreads, use_python=use_python, one_sample=True)
+    
+    if rois == 'schaefer':
+        ppi_pvalue_df = make_symmetric_df(ppi_model_df, "p_value")
+        ppi_estimate_df = make_symmetric_df(ppi_model_df, "estimate")
+
+        lss_pvalue_df = make_symmetric_df(lss_model_df, "p_value")
+        lss_estimate_df = make_symmetric_df(lss_model_df, "estimate")
+
+        lsa_pvalue_df = make_symmetric_df(lsa_model_df, "p_value")
+        lsa_estimate_df = make_symmetric_df(lsa_model_df, "estimate")
+    elif rois == 'activation':
+        
+        # .loc[columns, columns] ensures rois are listed in the same order
+        ppi_pvalue_df = _edge_to_adj(ppi_model_df, "p_value")
+        columns = ppi_pvalue_df.columns.sort_values()
+        ppi_pvalue_df = ppi_pvalue_df.loc[columns, columns]
+        ppi_estimate_df = _edge_to_adj(ppi_model_df, "estimate").loc[columns, columns]
+
+        lss_pvalue_df = _edge_to_adj(lss_model_df, "p_value").loc[columns, columns]
+        lss_estimate_df = _edge_to_adj(lss_model_df, "estimate").loc[columns, columns]
+        
+        lsa_pvalue_df = _edge_to_adj(lsa_model_df, "p_value").loc[columns, columns]
+        lsa_estimate_df = _edge_to_adj(lsa_model_df, "estimate").loc[columns, columns]
+    
+    cmap_dict_lsa = {
+        "Null": 0,
+        "LSA": 1,
+        "PPI": 2,
+        "Both": 3
+    }
+    
+    cmap_dict_lss = {
+        "Null": 0,
+        "LSS": 1,
+        "PPI": 2,
+        "Both": 3
+    }
+
+    fig_lsa, overlap_lsa_df = make_comparison_matrix(lsa_pvalue_df, "lsa", ppi_pvalue_df, "ppi", rois=rois, cmap_dict=cmap_dict_lsa)
+    
+    fig_lss, overlap_lss_df = make_comparison_matrix(lss_pvalue_df, "lss", ppi_pvalue_df, "ppi", rois=rois, cmap_dict=cmap_dict_lss)
+
+    return fig_lsa, fig_lss, ppi_model_df, lss_model_df, lsa_model_df, overlap_lsa_df, overlap_lss_df
+
 
 def compare_lss_lsa_sig(lss_objs1, lss_objs2, lsa_objs1, lsa_objs2,
                         trialtype1, trialtype2, rois, nthreads=1, use_python=False):
