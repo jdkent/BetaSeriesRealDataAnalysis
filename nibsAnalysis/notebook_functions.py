@@ -13,6 +13,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
+from matplotlib import colors
 import matplotlib as mpl
 from nilearn.plotting import plot_connectome
 from scipy import stats
@@ -562,21 +563,26 @@ def return_lower_matrix(adj_matrix):
     return from_1d_to_2d_lower_matrix(lower_tri, adj_matrix.columns)
 
 
-def make_glass_brain(overlap_df, coords_df):
+def make_glass_brain(overlap_df, coords_df, annotate_nodes=True, color_nodes=False):
     coords = coords_df[["X", "Y", "Z"]].values
-    coord_names = coords_df["Cluster ID"].values
-    
-    cmap_list = sns.xkcd_palette(["royal blue", "olive green", "bright yellow"])
+
+    cmap_list = ["#1f77b4", "#ff7f0e", "#da5bac"]
     cmap=ListedColormap(cmap_list)
     
     fig, axes = plt.subplots(ncols=2, figsize=(14, 5), gridspec_kw={'width_ratios': [23/24, 1/24]})
     
+    kwargs = {}
+    if color_nodes:
+        kwargs.update({'node_color': [colors.to_hex(rgb / 255) for rgb in coords_df[["r", "g", "b"]].values]})
+        
     plot_connectome(overlap_df, axes=axes[0], figure=fig, edge_cmap=cmap, node_coords=coords,
                 edge_vmin=0.9,
                 edge_vmax=3,
                 node_size=200,
                 edge_threshold=0,
-                colorbar=False)
+                colorbar=False,
+                node_kwargs={'edgecolors': "k"},
+                **kwargs)
 
     # make the color bar
     colorbar = mpl.colorbar.ColorbarBase(axes[1], cmap=cmap, orientation='vertical', boundaries=[0, 1, 2, 3])
@@ -584,11 +590,13 @@ def make_glass_brain(overlap_df, coords_df):
     colorbar.set_ticks([0.0 + r / 3 * (0.5 + i) for i in range(3)])
     colorbar.set_ticklabels(["LSA", "LSS", "Both"])
     colorbar.ax.tick_params(labelsize=12)
-
-    # label the nodes with their number
-    for ax in fig.axes[2:]:
-        for name, node in zip(coord_names, ax.collections[0].get_offsets()):
-            ax.annotate(name, node, ha='center', va='center', zorder=5000)
+    
+    if annotate_nodes:
+        # label the nodes with their number
+        coord_names = coords_df["Cluster ID"].values
+        for ax in fig.axes[2:]:
+            for name, node in zip(coord_names, ax.collections[0].get_offsets()):
+                ax.annotate(name, node, ha='center', va='center', zorder=5000)
     
     return fig
 
@@ -623,7 +631,7 @@ def make_comparison_matrix(p_value_matrix1, matrix1_label, p_value_matrix2, matr
 
     overlap_df = from_1d_to_2d_lower_matrix(overlap_vals, cols)
     
-    cmap = sns.xkcd_palette(["cyan", "royal blue", "olive green", "bright yellow"])
+    cmap = ["#81E7F8", "#1f77b4", "#ff7f0e", "#da5bac"]
     
     if rois == 'schaefer':
         fig = _make_pretty_schaefer_heatmap(overlap_df,
