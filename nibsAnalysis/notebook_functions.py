@@ -563,9 +563,12 @@ def return_lower_matrix(adj_matrix):
     return from_1d_to_2d_lower_matrix(lower_tri, adj_matrix.columns)
 
 
-def make_glass_brain(overlap_df, coords_df, annotate_nodes=True, color_nodes=False):
+def make_glass_brain(overlap_df, coords_df, annotate_nodes=True, color_nodes=False, cbar_ticks=None):
     coords = coords_df[["X", "Y", "Z"]].values
-
+    
+    if cbar_ticks is None:
+        cbar_ticks = ["LSA", "LSS", "Both"]
+        
     cmap_list = ["#1f77b4", "#ff7f0e", "#da5bac"]
     cmap=ListedColormap(cmap_list)
     
@@ -588,7 +591,7 @@ def make_glass_brain(overlap_df, coords_df, annotate_nodes=True, color_nodes=Fal
     colorbar = mpl.colorbar.ColorbarBase(axes[1], cmap=cmap, orientation='vertical', boundaries=[0, 1, 2, 3])
     r = 3.0 
     colorbar.set_ticks([0.0 + r / 3 * (0.5 + i) for i in range(3)])
-    colorbar.set_ticklabels(["LSA", "LSS", "Both"])
+    colorbar.set_ticklabels(cbar_ticks)
     colorbar.ax.tick_params(labelsize=12)
     
     if annotate_nodes:
